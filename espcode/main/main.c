@@ -10,6 +10,11 @@ CTS2 42
 #include "stdio.h"
 #include "stdlib.h"
 
+#include "nvs_flash.h"
+
+#include "lwip/err.h"
+#include "lwip/sys.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -22,11 +27,7 @@ CTS2 42
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
-
-#include "nvs_flash.h"
-
-#include "lwip/err.h"
-#include "lwip/sys.h"
+#include "esp_ota_ops.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu
 
@@ -37,8 +38,16 @@ CTS2 42
 #define EXAMPLE_ESP_WIFI_PASS      "m1m1uK1___"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  3
 
-#define BLINK_GPIO      48
-#define HC12_SET_GPIO   8
+//#if CONFIG_IDF_TARGET=="esp32s3"
+//   #define BLINK_GPIO          48
+//   #define HC12_SET_GPIO       8
+//#else
+//    #if CONFIG_IDF_TARGET=="esp32"
+        #define BLINK_GPIO      2
+//    #endif
+//#endif
+
+
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -225,6 +234,114 @@ void get_worldclock_api(void)
     esp_http_client_cleanup(client);
 }
 
+//#if CONFIG_IDF_TARGET=="esp32s3"
+//void uart_test(void)
+//{
+//    const uart_port_t uart_num = UART_NUM_2;
+//    uart_config_t uart_config = {
+//        .baud_rate = 2400,
+//        .data_bits = UART_DATA_8_BITS,
+//        .parity = UART_PARITY_DISABLE,
+//        .stop_bits = UART_STOP_BITS_1,
+//        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+//    };
+//    // hc12 set pin
+//    gpio_pad_select_gpio(HC12_SET_GPIO);
+//    gpio_set_direction(HC12_SET_GPIO, GPIO_MODE_OUTPUT);
+//    gpio_set_level(HC12_SET_GPIO, 0);
+//    // Configure UART parameters
+//    ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config));
+//    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_2, 20, 19, 41, 42));
+//    // Setup UART buffered IO with event queue
+//    const int uart_buffer_size = (1024 * 2);
+//    QueueHandle_t uart_queue;
+//    // Install UART driver using an event queue here
+//    ESP_ERROR_CHECK(uart_driver_install(    UART_NUM_2, 
+//                                            uart_buffer_size, 
+//                                            uart_buffer_size, 
+//                                            10, 
+//                                            &uart_queue, 
+//                                            0));
+//    // Write data to UART.
+//    char* test_str = "AT+RX\n\r";
+//    uart_write_bytes(uart_num, (const char*)test_str, strlen(test_str));
+//    printf("\n%s\n", test_str);
+//    vTaskDelay(100);
+//    // Read data from UART.
+//    uint8_t data[128] = {0};
+//    int length = 0;
+//    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t*)&length));
+//    length = uart_read_bytes(uart_num, data, length, 100);
+//    printf("\n%s\n", (char*)data);
+//}
+//#endif 
+
+void ota_update(httpd_req_t *req)
+{
+    esp_ota_handle_t ota_handle;
+    char ota_buff[2048];
+
+    int content_length = req->content_len;
+    int content_received = 0;
+    int recv_len;
+    bool is_req_body_started = false;
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    ESP_LOGW(LOG_OTA, "---->Partition label: '%s'\n", update_partition->label);
+    ESP_LOGW(LOG_OTA, "---->Partition size: '%d'\n", update_partition->size);
+
+    status_update_ota = -1; // Código de erro 
+    do
+    {
+        // leitura do dado recebido
+        recv_len = httpd_req_recv(req, ota_buff, MIN(content_length, sizeof(ota_buff)));
+
+        ESP_LOGI(LOG_OTA, "RX: %d of %d\r", content_received, content_length);
+        // Primeiro pacote completo, separa o body
+        if (!is_req_body_started)
+        {
+            // só roda a primeira vez
+            is_req_body_started = true;
+            char *body_start_p = strstr(ota_buff, "\r\n\r\n") + 4;
+            int body_part_len = recv_len - (body_start_p - ota_buff);
+
+            int body_part_sta = recv_len - body_part_len;
+            ESP_LOGI(LOG_OTA, "File Size: %d : Start Location:%d - End Location:%d", content_length, body_part_sta, body_part_len);
+            ESP_LOGI(LOG_OTA, "File Size: %d", content_length);
+
+            // Iniciando a partição que a nova OTA ocupara
+            esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+            ESP_LOGI(LOG_OTA, "Writing to partition subtype %d at offset 0x%x", update_partition->subtype, update_partition->address);
+
+            // Começa a escrever na OTA
+            esp_ota_write(ota_handle, body_start_p, body_part_len);
+        }
+        else
+        {
+            // Escreve na OTA a cada pacote recebido
+            esp_ota_write(ota_handle, ota_buff, recv_len);
+            content_received += recv_len;
+        }
+    } while (recv_len > 0 && content_received < content_length);
+
+    // Finaliza a OT
+    esp_ota_end(ota_handle) == ESP_OK)
+
+    // Seta para que o boot inicie n nova partição
+    if (esp_ota_set_boot_partition(update_partition) == ESP_OK)
+    {
+        const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
+        ESP_LOGI(LOG_OTA, "Next boot partition subtype %d at offset 0x%x", boot_partition->subtype, boot_partition->address);
+        ESP_LOGI(LOG_OTA, "Please Restart System...");
+        status_update_ota = 1;
+    }
+    else
+    {
+        ESP_LOGE(LOG_OTA, "!!! Flashed Error !!!");
+        status_update_ota = -1;
+    }
+}
+
 void app_main(void)
 {
     //Initialize NVS
@@ -241,42 +358,9 @@ void app_main(void)
     get_worldclock_api();
     //get_flask_api();
 
-    const uart_port_t uart_num = UART_NUM_2;
-    uart_config_t uart_config = {
-        .baud_rate = 2400,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
-    };
-    // hc12 set pin
-    gpio_pad_select_gpio(HC12_SET_GPIO);
-    gpio_set_direction(HC12_SET_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(HC12_SET_GPIO, 0);
-    // Configure UART parameters
-    ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_2, 20, 19, 41, 42));
-    // Setup UART buffered IO with event queue
-    const int uart_buffer_size = (1024 * 2);
-    QueueHandle_t uart_queue;
-    // Install UART driver using an event queue here
-    ESP_ERROR_CHECK(uart_driver_install(    UART_NUM_2, 
-                                            uart_buffer_size, 
-                                            uart_buffer_size, 
-                                            10, 
-                                            &uart_queue, 
-                                            0));
-    // Write data to UART.
-    char* test_str = "AT+RX\n\r";
-    uart_write_bytes(uart_num, (const char*)test_str, strlen(test_str));
-    printf("\n%s\n", test_str);
-    vTaskDelay(100);
-    // Read data from UART.
-    uint8_t data[128] = {0};
-    int length = 0;
-    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t*)&length));
-    length = uart_read_bytes(uart_num, data, length, 100);
-    printf("\n%s\n", (char*)data);
+    //#if CONFIG_IDF_TARGET=="esp32s3"
+    //    uart_test();
+    //#endif
 
     gpio_pad_select_gpio(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
