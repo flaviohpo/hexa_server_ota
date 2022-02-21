@@ -23,10 +23,14 @@ def get_firmware():
 @app.route('/firmware_file')
 def get_firmware_file():
     try:
-        return send_file('blink.bin')
+        return send_file('./espcode/build/espcode.bin')
     except Exception as Ex:
         return str(Ex)
 
+# depois vai ter que mudar isso pra buscar a versao no version.h
+@app.route('/firmware_version')
+def get_firmware_version():
+    return "0.0.1"
 
 # start the server with the 'run()' method
 if __name__ == '__main__':

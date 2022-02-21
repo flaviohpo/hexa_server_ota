@@ -18,6 +18,12 @@
     "uart.h": "c",
     "array": "c",
     "string": "c",
-    "string_view": "c"
+    "string_view": "c",
+    "*.inc": "c",
+    "cstring": "c",
+    "bitset": "c",
+    "initializer_list": "c",
+    "regex": "c",
+    "utility": "c"
   }
 }

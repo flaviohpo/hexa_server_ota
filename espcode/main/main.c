@@ -5,7 +5,22 @@ RXD2 19
 SET  8
 RTS2 41
 CTS2 42
+
+
+I (49026) esp_image: segment 0: paddr=00110020 vaddr=3f400020 size=1ada0h (109984) map
+I (49062) esp_image: segment 1: paddr=0012adc8 vaddr=3ffb0000 size=038dch ( 14556) 
+I (49066) esp_image: segment 2: paddr=0012e6ac vaddr=40080000 size=0196ch (  6508) 
+I (49074) esp_image: segment 3: paddr=00130020 vaddr=400d0020 size=8d350h (578384) map
+I (49234) esp_image: segment 4: paddr=001bd378 vaddr=4008196c size=12d60h ( 77152) 
+I (49258) esp_image: segment 5: paddr=001d00e0 vaddr=50000000 size=00010h (    16) 
+
+PROBLEMS
+- na hora de gravar a primeira parte do firmware na particao OTA esta
+dando um problema de acesso em memoria não permitido
+
 */
+
+
 #include <string.h>
 #include "stdio.h"
 #include "stdlib.h"
@@ -29,6 +44,8 @@ CTS2 42
 #include "esp_http_client.h"
 #include "esp_ota_ops.h"
 
+#include "../version.h"
+
 /* The examples use WiFi configuration that you can set via project configuration menu
 
    If you'd rather not, just change the below entries to strings with
@@ -47,7 +64,9 @@ CTS2 42
 //    #endif
 //#endif
 
-
+esp_err_t ota_update_start(uint32_t last_data_length, esp_partition_t** update_partition, esp_ota_handle_t* ota_handle);
+esp_err_t ota_update_chunk(uint8_t* data, uint32_t size, esp_ota_handle_t* ota_handle);
+esp_err_t ota_update_finish(esp_partition_t** update_partition, esp_ota_handle_t* ota_handle);
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -57,9 +76,18 @@ static EventGroupHandle_t s_wifi_event_group;
  * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
+#define LOG_OTA             "OTA"
+#define LOG_WIFI            "WIFI"
+#define NGROK_URL_VERSION "http://9570-2804-7f5-9392-c8f9-df13-3bb7-d389-32b3.ngrok.io/firmware_version"
+#define NGROK_URL_FILE "http://9570-2804-7f5-9392-c8f9-df13-3bb7-d389-32b3.ngrok.io/firmware_file"
 
-static const char *TAG = "wifi station";
+typedef enum{
+    FIRM_VERSION_REQUEST        ,
+    FIRM_FILE_REQUEST           ,
+}CURRENT_HTTP_REQUEST_tn;
 
+CURRENT_HTTP_REQUEST_tn CurrentRequest = FIRM_VERSION_REQUEST;
+char remote_firmware_version[10] = "null";
 static int s_retry_num = 0;
 
 static void event_handler(void* arg, esp_event_base_t event_base,
@@ -71,14 +99,14 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
+            ESP_LOGI(LOG_WIFI, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI(TAG,"connect to the AP fail");
+        ESP_LOGI(LOG_WIFI,"connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(LOG_WIFI, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -131,7 +159,7 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
     ESP_ERROR_CHECK(esp_wifi_start() );
 
-    ESP_LOGI(TAG, "wifi_init_sta finished.");
+    ESP_LOGI(LOG_WIFI, "wifi_init_sta finished.");
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
@@ -144,32 +172,33 @@ void wifi_init_sta(void)
     /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
      * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
+        ESP_LOGI(LOG_WIFI, "connected to ap SSID:%s password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
+        ESP_LOGI(LOG_WIFI, "Failed to connect to SSID:%s, password:%s",
                  EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
     } else {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+        ESP_LOGE(LOG_WIFI, "UNEXPECTED EVENT");
     }
 
     /* The event will not be processed after unregister */
     ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip));
     ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
     vEventGroupDelete(s_wifi_event_group);
-
 }
 
+uint8_t firmware_version_received = 0;
+uint32_t last_content_length = 0;
+uint32_t last_data_length = 0;
+uint32_t packet_counter = 0;
+esp_ota_handle_t ota_handle;
+const esp_partition_t* update_partition;
 
 esp_err_t client_event_handler(esp_http_client_event_t *evt)
 {
-   //esp_http_client_event_id_t event_id;    /*!< event_id, to know the cause of the event */
-   //esp_http_client_handle_t client;        /*!< esp_http_client_handle_t context */
-   //void *data;                             /*!< data of the event */
-   //int data_len;                           /*!< data length of data */
-   //void *user_data;                        /*!< user_data context, from esp_http_client_config_t user_data */
-   //char *header_key;                       /*!< For HTTP_EVENT_ON_HEADER event_id, it's store current http header key */
-   //char *header_value;     
+    
+    char* data_ptr = (char*)evt->data;
+    esp_err_t err = ESP_OK;
 
     switch (evt->event_id)
     {
@@ -182,19 +211,73 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
         break;
 
         case HTTP_EVENT_HEADERS_SENT:
+            packet_counter = 0;
             printf("HTTP_EVENT_HEADERS_SENT\n");
         break;
 
         case HTTP_EVENT_ON_HEADER:
             printf("HTTP_EVENT_ON_HEADER: key=%s value=%s\n", evt->header_key, evt->header_value);
+            if(strcmp(evt->header_key, "Content-Length") == 0)
+            {
+                last_content_length = atoi(evt->header_value);
+                printf("last_content_length=%d\n", last_content_length);
+            }
         break;
 
         case HTTP_EVENT_ON_DATA:
-            printf("HTTP_EVENT_ON_DATA: %s\n", (char*)evt->data);
+            last_data_length = evt->data_len;
+
+            switch(CurrentRequest)
+            {
+                case FIRM_VERSION_REQUEST:
+                    strncpy(remote_firmware_version, (char*)evt->data, last_data_length);
+                    printf("Version received=%s\n", remote_firmware_version);
+                    firmware_version_received = 1;
+                break;
+
+                case FIRM_FILE_REQUEST:
+                    if(packet_counter == 0)
+                    {
+                        err = ota_update_start(last_content_length, &update_partition, &ota_handle);
+                        if(err != ESP_OK)
+                        {
+                            ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
+                        }
+                        else
+                        {
+                            err = ota_update_chunk(evt->data, last_data_length, &ota_handle);
+                            if(err != ESP_OK)
+                            {
+                                ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
+                            }                            
+                        }
+                    }
+                    else
+                    {
+                        err = ota_update_chunk(evt->data, last_data_length, &ota_handle);
+                        if(err != ESP_OK)
+                        {
+                            ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
+                        }  
+                    }
+                break;
+            }
+            printf("pkt=%d\n", packet_counter);
+            packet_counter++;
         break;
 
         case HTTP_EVENT_ON_FINISH:
             printf("HTTP_EVENT_ON_FINISH\n");
+            switch(CurrentRequest)
+            {
+                case FIRM_VERSION_REQUEST:
+
+                break;
+
+                case FIRM_FILE_REQUEST:
+                    ota_update_finish(update_partition, &ota_handle);
+                break;
+            }
         break;
 
         case HTTP_EVENT_DISCONNECTED:
@@ -209,12 +292,25 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-
-void get_flask_api(void)
+void http_get_firmware_file(void)
 {
+    CurrentRequest = FIRM_FILE_REQUEST;
     esp_http_client_config_t client_config = 
     {
-        .url = "http://866d-2804-7f5-9392-c8f9-2a98-1385-a5f2-56da.ngrok.io/",
+        .url = NGROK_URL_FILE,
+        .event_handler = client_event_handler
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&client_config);
+    esp_http_client_perform(client);
+    esp_http_client_cleanup(client);
+}
+
+void http_get_firmware_version(void)
+{
+    CurrentRequest = FIRM_VERSION_REQUEST;
+    esp_http_client_config_t client_config = 
+    {
+        .url = NGROK_URL_VERSION,
         .event_handler = client_event_handler
     };
     esp_http_client_handle_t client = esp_http_client_init(&client_config);
@@ -234,112 +330,72 @@ void get_worldclock_api(void)
     esp_http_client_cleanup(client);
 }
 
-//#if CONFIG_IDF_TARGET=="esp32s3"
-//void uart_test(void)
-//{
-//    const uart_port_t uart_num = UART_NUM_2;
-//    uart_config_t uart_config = {
-//        .baud_rate = 2400,
-//        .data_bits = UART_DATA_8_BITS,
-//        .parity = UART_PARITY_DISABLE,
-//        .stop_bits = UART_STOP_BITS_1,
-//        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
-//    };
-//    // hc12 set pin
-//    gpio_pad_select_gpio(HC12_SET_GPIO);
-//    gpio_set_direction(HC12_SET_GPIO, GPIO_MODE_OUTPUT);
-//    gpio_set_level(HC12_SET_GPIO, 0);
-//    // Configure UART parameters
-//    ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config));
-//    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_2, 20, 19, 41, 42));
-//    // Setup UART buffered IO with event queue
-//    const int uart_buffer_size = (1024 * 2);
-//    QueueHandle_t uart_queue;
-//    // Install UART driver using an event queue here
-//    ESP_ERROR_CHECK(uart_driver_install(    UART_NUM_2, 
-//                                            uart_buffer_size, 
-//                                            uart_buffer_size, 
-//                                            10, 
-//                                            &uart_queue, 
-//                                            0));
-//    // Write data to UART.
-//    char* test_str = "AT+RX\n\r";
-//    uart_write_bytes(uart_num, (const char*)test_str, strlen(test_str));
-//    printf("\n%s\n", test_str);
-//    vTaskDelay(100);
-//    // Read data from UART.
-//    uint8_t data[128] = {0};
-//    int length = 0;
-//    ESP_ERROR_CHECK(uart_get_buffered_data_len(uart_num, (size_t*)&length));
-//    length = uart_read_bytes(uart_num, data, length, 100);
-//    printf("\n%s\n", (char*)data);
-//}
-//#endif 
-
-void ota_update(httpd_req_t *req)
+esp_err_t ota_update_start(uint32_t last_data_length, esp_partition_t** update_partition, esp_ota_handle_t* ota_handle)
 {
-    esp_ota_handle_t ota_handle;
-    char ota_buff[2048];
-
-    int content_length = req->content_len;
-    int content_received = 0;
-    int recv_len;
-    bool is_req_body_started = false;
-
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
-    ESP_LOGW(LOG_OTA, "---->Partition label: '%s'\n", update_partition->label);
-    ESP_LOGW(LOG_OTA, "---->Partition size: '%d'\n", update_partition->size);
-
-    status_update_ota = -1; // Código de erro 
-    do
+    *update_partition = esp_ota_get_next_update_partition(NULL);
+    ESP_LOGI(LOG_OTA, "---->Partition label: '%s'", (*update_partition)->label);
+    ESP_LOGI(LOG_OTA, "---->Partition size: '%d'", (*update_partition)->size);
+    esp_err_t err = esp_ota_begin(*update_partition, OTA_SIZE_UNKNOWN, ota_handle);
+    if (err != ESP_OK)
     {
-        // leitura do dado recebido
-        recv_len = httpd_req_recv(req, ota_buff, MIN(content_length, sizeof(ota_buff)));
-
-        ESP_LOGI(LOG_OTA, "RX: %d of %d\r", content_received, content_length);
-        // Primeiro pacote completo, separa o body
-        if (!is_req_body_started)
-        {
-            // só roda a primeira vez
-            is_req_body_started = true;
-            char *body_start_p = strstr(ota_buff, "\r\n\r\n") + 4;
-            int body_part_len = recv_len - (body_start_p - ota_buff);
-
-            int body_part_sta = recv_len - body_part_len;
-            ESP_LOGI(LOG_OTA, "File Size: %d : Start Location:%d - End Location:%d", content_length, body_part_sta, body_part_len);
-            ESP_LOGI(LOG_OTA, "File Size: %d", content_length);
-
-            // Iniciando a partição que a nova OTA ocupara
-            esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
-            ESP_LOGI(LOG_OTA, "Writing to partition subtype %d at offset 0x%x", update_partition->subtype, update_partition->address);
-
-            // Começa a escrever na OTA
-            esp_ota_write(ota_handle, body_start_p, body_part_len);
-        }
-        else
-        {
-            // Escreve na OTA a cada pacote recebido
-            esp_ota_write(ota_handle, ota_buff, recv_len);
-            content_received += recv_len;
-        }
-    } while (recv_len > 0 && content_received < content_length);
-
-    // Finaliza a OT
-    esp_ota_end(ota_handle) == ESP_OK)
-
-    // Seta para que o boot inicie n nova partição
-    if (esp_ota_set_boot_partition(update_partition) == ESP_OK)
-    {
-        const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
-        ESP_LOGI(LOG_OTA, "Next boot partition subtype %d at offset 0x%x", boot_partition->subtype, boot_partition->address);
-        ESP_LOGI(LOG_OTA, "Please Restart System...");
-        status_update_ota = 1;
+        ESP_LOGE(LOG_OTA, "Error With OTA Begin, Cancelling OTA");
+        return ESP_FAIL;
     }
     else
     {
-        ESP_LOGE(LOG_OTA, "!!! Flashed Error !!!");
-        status_update_ota = -1;
+        ESP_LOGI(LOG_OTA, "Writing to partition subtype %d at offset 0x%X", (*update_partition)->subtype, (*update_partition)->address);
+        ESP_LOGI(LOG_OTA, "File Size: %d", last_data_length);
     }
+    return ESP_OK;
+}
+
+esp_err_t ota_update_chunk(uint8_t* data, uint32_t size, esp_ota_handle_t* ota_handle)
+{
+    if(esp_ota_write(*ota_handle, data, size) != ESP_OK)
+    {
+        ESP_LOGE(LOG_OTA, "Linha:%d", __LINE__);
+        return ESP_FAIL;
+    }
+    else
+    {
+        return ESP_OK;
+    }        
+}
+
+esp_err_t ota_update_finish(esp_partition_t** update_partition, esp_ota_handle_t* ota_handle)
+{
+    esp_err_t err;
+    err = esp_ota_end(*ota_handle);
+
+    if (err == ESP_OK)
+    {
+        // Seta para que o boot inicie n nova partição
+        if(*update_partition == NULL)
+        {
+            ESP_LOGE("OTA", "*update_partition == NULL");
+        }
+        // esta retornando ESP_ERR_OTA_VALIDATE_FAILED
+        err = esp_ota_set_boot_partition(*update_partition);
+        
+        if (err == ESP_OK)
+        {
+            const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
+            ESP_LOGI(LOG_OTA, "Next boot partition subtype %d at offset 0x%x", boot_partition->subtype, boot_partition->address);
+            ESP_LOGI(LOG_OTA, "Please Restart System...");
+        }
+        else
+        {
+            ESP_LOGE(LOG_OTA, "Error %d from esp_ota_set_boot_partition()", (uint32_t)err);
+            return ESP_FAIL;
+        }
+    }
+    else
+    {
+        ESP_LOGE(LOG_OTA, "Error %d from esp_ota_end()", (uint32_t)err);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
 void app_main(void)
@@ -352,11 +408,10 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    ESP_LOGI(LOG_WIFI, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
-    get_worldclock_api();
-    //get_flask_api();
+    //get_worldclock_api();
 
     //#if CONFIG_IDF_TARGET=="esp32s3"
     //    uart_test();
@@ -365,6 +420,25 @@ void app_main(void)
     gpio_pad_select_gpio(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+
+    printf("FIRMWARE VERSION=%s\n", FIRMWARE_VERSION);
+
+    http_get_firmware_version();
+
+    while(firmware_version_received == 0)
+    {
+        vTaskDelay(1);
+    }
+
+    if(strcmp(FIRMWARE_VERSION, remote_firmware_version) != 0)
+    {
+        printf("Versao do firmware remota mais atualizada.\n");
+        http_get_firmware_file();
+    }
+    else
+    {
+        printf("Firmware is up to date.\n");
+    }
 
     while(1)
     {
