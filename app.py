@@ -41,14 +41,17 @@ def get_firmware_file():
 # depois vai ter que mudar isso pra buscar a versao no version.h
 @app.route('/firmware_version')
 def get_firmware_version():
-    result = ''
+    version_patern = re.compile(r'[0-9]+.[0-9]+.[0-9]+')
     with open('./espcode/version.h', 'r') as firm_version:
         b = firm_version.readline()
-        while b:
-            version_patern = re.compile(r'{0,9}.{0,9}.0,9')
-            print(version_patern.findall(b))
-            b = firm_version.readline();
-    return "0.0.0"
+        while b:          
+            match = version_patern.search(b)
+            if match:
+                version_patern = re.compile(r'[0-9]+')
+                print(match.group(0))
+                return(match.group(0))
+            b = firm_version.readline()
+    return 'bad request!', 400
 
 # start the server with the 'run()' method
 if __name__ == '__main__':
