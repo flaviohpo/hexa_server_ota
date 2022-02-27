@@ -78,8 +78,8 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_FAIL_BIT      BIT1
 #define LOG_OTA             "OTA"
 #define LOG_WIFI            "WIFI"
-#define NGROK_URL_VERSION "http://9570-2804-7f5-9392-c8f9-df13-3bb7-d389-32b3.ngrok.io/firmware_version"
-#define NGROK_URL_FILE "http://9570-2804-7f5-9392-c8f9-df13-3bb7-d389-32b3.ngrok.io/firmware_file"
+#define NGROK_URL_VERSION "http://c2c3-2804-7f5-9490-73dd-f090-5acb-ce4-9738.ngrok.io/firmware_version"
+#define NGROK_URL_FILE "http://c2c3-2804-7f5-9490-73dd-f090-5acb-ce4-9738.ngrok.io/firmware_file"
 
 typedef enum{
     FIRM_VERSION_REQUEST        ,
@@ -192,7 +192,7 @@ uint32_t last_content_length = 0;
 uint32_t last_data_length = 0;
 uint32_t packet_counter = 0;
 esp_ota_handle_t ota_handle;
-const esp_partition_t* update_partition;
+const esp_partition_t *update_partition;
 
 esp_err_t client_event_handler(esp_http_client_event_t *evt)
 {
@@ -225,12 +225,10 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
         break;
 
         case HTTP_EVENT_ON_DATA:
-            last_data_length = evt->data_len;
-
             switch(CurrentRequest)
             {
                 case FIRM_VERSION_REQUEST:
-                    strncpy(remote_firmware_version, (char*)evt->data, last_data_length);
+                    strncpy(remote_firmware_version, (char*)evt->data, evt->data_len);
                     printf("Version received=%s\n", remote_firmware_version);
                     firmware_version_received = 1;
                 break;
@@ -238,31 +236,38 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
                 case FIRM_FILE_REQUEST:
                     if(packet_counter == 0)
                     {
-                        err = ota_update_start(last_content_length, &update_partition, &ota_handle);
-                        if(err != ESP_OK)
+                        update_partition = esp_ota_get_next_update_partition(NULL);
+                        ESP_LOGI(LOG_OTA, "---->Partition label: '%s'", update_partition->label);
+                        ESP_LOGI(LOG_OTA, "---->Partition size: '%d'", update_partition->size);
+                        esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+                        if (err != ESP_OK)
                         {
-                            ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
+                            ESP_LOGE(LOG_OTA, "Error With OTA Begin, Cancelling OTA");
+                            return ESP_FAIL;
                         }
                         else
                         {
-                            err = ota_update_chunk(evt->data, last_data_length, &ota_handle);
-                            if(err != ESP_OK)
+                            ESP_LOGI(LOG_OTA, "Writing to partition subtype %d at offset 0x%X", update_partition->subtype, update_partition->address);
+                            ESP_LOGI(LOG_OTA, "File Size: %d", last_content_length);
+                            if(esp_ota_write(ota_handle, evt->data, evt->data_len) != ESP_OK)
                             {
-                                ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
-                            }                            
+                                ESP_LOGE(LOG_OTA, "Linha:%d", __LINE__);
+                                return ESP_FAIL;
+                            }
                         }
                     }
                     else
                     {
-                        err = ota_update_chunk(evt->data, last_data_length, &ota_handle);
-                        if(err != ESP_OK)
+                        if(esp_ota_write(ota_handle, evt->data, evt->data_len) != ESP_OK)
                         {
-                            ESP_LOGE(LOG_OTA, "Erro HTTP_EVENT_ON_DATA line:%d\n", __LINE__);
-                        }  
+                            ESP_LOGE(LOG_OTA, "Linha:%d", __LINE__);
+                            return ESP_FAIL;
+                        }
                     }
                 break;
             }
-            printf("pkt=%d\n", packet_counter);
+            //printf("pkt=%d\n", packet_counter);
+            printf(".");
             packet_counter++;
         break;
 
@@ -275,7 +280,35 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
                 break;
 
                 case FIRM_FILE_REQUEST:
-                    ota_update_finish(update_partition, &ota_handle);
+                    err = esp_ota_end(ota_handle);
+                    if (err == ESP_OK)
+                    {
+                        // Seta para que o boot inicie n nova partição
+                        if(update_partition == NULL)
+                        {
+                            ESP_LOGE("OTA", "update_partition == NULL");
+                            return ESP_FAIL;
+                        }
+                        // esta retornando ESP_ERR_OTA_VALIDATE_FAILED
+                        err = esp_ota_set_boot_partition(update_partition);
+                        
+                        if (err == ESP_OK)
+                        {
+                            const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
+                            ESP_LOGI(LOG_OTA, "Next boot partition subtype %d at offset 0x%x", boot_partition->subtype, boot_partition->address);
+                            ESP_LOGI(LOG_OTA, "Please Restart System...");
+                        }
+                        else
+                        {
+                            ESP_LOGE(LOG_OTA, "Error %d from esp_ota_set_boot_partition()", (uint32_t)err);
+                            return ESP_FAIL;
+                        }
+                    }
+                    else
+                    {
+                        ESP_LOGE(LOG_OTA, "Error %d from esp_ota_end()", (uint32_t)err);
+                        return ESP_FAIL;
+                    }
                 break;
             }
         break;
@@ -330,83 +363,15 @@ void get_worldclock_api(void)
     esp_http_client_cleanup(client);
 }
 
-esp_err_t ota_update_start(uint32_t last_data_length, esp_partition_t** update_partition, esp_ota_handle_t* ota_handle)
-{
-    *update_partition = esp_ota_get_next_update_partition(NULL);
-    ESP_LOGI(LOG_OTA, "---->Partition label: '%s'", (*update_partition)->label);
-    ESP_LOGI(LOG_OTA, "---->Partition size: '%d'", (*update_partition)->size);
-    esp_err_t err = esp_ota_begin(*update_partition, OTA_SIZE_UNKNOWN, ota_handle);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(LOG_OTA, "Error With OTA Begin, Cancelling OTA");
-        return ESP_FAIL;
-    }
-    else
-    {
-        ESP_LOGI(LOG_OTA, "Writing to partition subtype %d at offset 0x%X", (*update_partition)->subtype, (*update_partition)->address);
-        ESP_LOGI(LOG_OTA, "File Size: %d", last_data_length);
-    }
-    return ESP_OK;
-}
-
-esp_err_t ota_update_chunk(uint8_t* data, uint32_t size, esp_ota_handle_t* ota_handle)
-{
-    if(esp_ota_write(*ota_handle, data, size) != ESP_OK)
-    {
-        ESP_LOGE(LOG_OTA, "Linha:%d", __LINE__);
-        return ESP_FAIL;
-    }
-    else
-    {
-        return ESP_OK;
-    }        
-}
-
-esp_err_t ota_update_finish(esp_partition_t** update_partition, esp_ota_handle_t* ota_handle)
-{
-    esp_err_t err;
-    err = esp_ota_end(*ota_handle);
-
-    if (err == ESP_OK)
-    {
-        // Seta para que o boot inicie n nova partição
-        if(*update_partition == NULL)
-        {
-            ESP_LOGE("OTA", "*update_partition == NULL");
-        }
-        // esta retornando ESP_ERR_OTA_VALIDATE_FAILED
-        err = esp_ota_set_boot_partition(*update_partition);
-        
-        if (err == ESP_OK)
-        {
-            const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
-            ESP_LOGI(LOG_OTA, "Next boot partition subtype %d at offset 0x%x", boot_partition->subtype, boot_partition->address);
-            ESP_LOGI(LOG_OTA, "Please Restart System...");
-        }
-        else
-        {
-            ESP_LOGE(LOG_OTA, "Error %d from esp_ota_set_boot_partition()", (uint32_t)err);
-            return ESP_FAIL;
-        }
-    }
-    else
-    {
-        ESP_LOGE(LOG_OTA, "Error %d from esp_ota_end()", (uint32_t)err);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
-}
-
 void app_main(void)
 {
     //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
+      err = nvs_flash_init();
     }
-    ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(err);
 
     ESP_LOGI(LOG_WIFI, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
@@ -448,5 +413,6 @@ void app_main(void)
 
         gpio_set_level(BLINK_GPIO, 1);
         vTaskDelay(100);
+
     }
 }
