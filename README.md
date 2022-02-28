@@ -14,6 +14,7 @@ https://semver.org/
 # endpoints
 /firmware_version: used to compare with the current device firmware version,
     if the current firmware is a lower version, the firmware will be updated.
+    
 /firmware_file: downloads the .bin file to replace the current firmware.
 
 # limitations
