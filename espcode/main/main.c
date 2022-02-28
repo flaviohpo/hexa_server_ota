@@ -87,7 +87,10 @@ typedef enum{
 }CURRENT_HTTP_REQUEST_tn;
 
 CURRENT_HTTP_REQUEST_tn CurrentRequest = FIRM_VERSION_REQUEST;
-char remote_firmware_version[10] = "null";
+char remote_firmware_version[50] = "null";
+uint32_t local_version_major;
+uint32_t local_version_minor;
+uint32_t local_version_patch;
 static int s_retry_num = 0;
 
 static void event_handler(void* arg, esp_event_base_t event_base,
@@ -230,7 +233,7 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
                 case FIRM_VERSION_REQUEST:
                     strncpy(remote_firmware_version, (char*)evt->data, evt->data_len);
                     printf("Version received=%s\n", remote_firmware_version);
-                    firmware_version_received = 1;
+                    
                 break;
 
                 case FIRM_FILE_REQUEST:
@@ -276,7 +279,7 @@ esp_err_t client_event_handler(esp_http_client_event_t *evt)
             switch(CurrentRequest)
             {
                 case FIRM_VERSION_REQUEST:
-
+                    firmware_version_received = 1;
                 break;
 
                 case FIRM_FILE_REQUEST:
@@ -365,6 +368,12 @@ void get_worldclock_api(void)
 
 void app_main(void)
 {
+    uint32_t remote_version_major;
+    uint32_t remote_version_minor;
+    uint32_t remote_version_patch;
+    char* token;
+    char current_version[50];
+
     //Initialize NVS
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -377,10 +386,6 @@ void app_main(void)
     wifi_init_sta();
 
     //get_worldclock_api();
-
-    //#if CONFIG_IDF_TARGET=="esp32s3"
-    //    uart_test();
-    //#endif
 
     gpio_pad_select_gpio(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
@@ -395,16 +400,47 @@ void app_main(void)
         vTaskDelay(1);
     }
 
-    if(strcmp(FIRMWARE_VERSION, remote_firmware_version) != 0)
+    strcpy(current_version, FIRMWARE_VERSION);
+    token = strtok(current_version, ".");
+    local_version_major = atoi(token);
+    token = strtok(NULL, ".");
+    local_version_minor = atoi(token);
+    token = strtok(NULL, ".");
+    local_version_patch = atoi(token);
+
+    token = strtok(remote_firmware_version, ".");
+    remote_version_major = atoi(token);
+    token = strtok(NULL, ".");
+    remote_version_minor = atoi(token);
+    token = strtok(NULL, ".");
+    remote_version_patch = atoi(token);
+
+    if(remote_version_major > local_version_major)
     {
-        printf("Versao do firmware remota mais atualizada.\n");
+        ESP_LOGW(LOG_OTA, "Firmware MAJOR version is outdated. Remote version is %d.", remote_version_major);
         http_get_firmware_file();
     }
     else
     {
-        printf("Firmware is up to date.\n");
+        if(remote_version_minor > local_version_minor)
+        {
+            ESP_LOGW(LOG_OTA, "Firmware MINOR version is outdated. Remote version is %d.", remote_version_minor);
+            http_get_firmware_file();
+        }
+        else
+        {
+            if(remote_version_minor > local_version_patch)
+            {
+                ESP_LOGW(LOG_OTA, "Firmware PATCH version is outdated. Remote version is %d.", remote_version_patch);
+                http_get_firmware_file();
+            }
+            else
+            {
+                ESP_LOGI(LOG_OTA, "Firmware is up to date.");
+            }
+        }
     }
-
+    
     while(1)
     {
 
