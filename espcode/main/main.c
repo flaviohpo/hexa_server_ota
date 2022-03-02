@@ -54,15 +54,7 @@ dando um problema de acesso em memoria não permitido
 #define EXAMPLE_ESP_WIFI_SSID      "MaisUmaRede"
 #define EXAMPLE_ESP_WIFI_PASS      "m1m1uK1___"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  3
-
-//#if CONFIG_IDF_TARGET=="esp32s3"
-//   #define BLINK_GPIO          48
-//   #define HC12_SET_GPIO       8
-//#else
-//    #if CONFIG_IDF_TARGET=="esp32"
-        #define BLINK_GPIO      2
-//    #endif
-//#endif
+#define BLINK_GPIO      2
 
 esp_err_t ota_update_start(uint32_t last_data_length, esp_partition_t** update_partition, esp_ota_handle_t* ota_handle);
 esp_err_t ota_update_chunk(uint8_t* data, uint32_t size, esp_ota_handle_t* ota_handle);
@@ -71,15 +63,12 @@ esp_err_t ota_update_finish(esp_partition_t** update_partition, esp_ota_handle_t
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 #define LOG_OTA             "OTA"
 #define LOG_WIFI            "WIFI"
-#define NGROK_URL_VERSION "http://c2c3-2804-7f5-9490-73dd-f090-5acb-ce4-9738.ngrok.io/firmware_version"
-#define NGROK_URL_FILE "http://c2c3-2804-7f5-9490-73dd-f090-5acb-ce4-9738.ngrok.io/firmware_file"
+#define URL_VERSION         "http://127.0.0.1:5000/firmware_version"
+#define URL_FILE            "http://127.0.0.1:5000/firmware_file"
 
 typedef enum{
     FIRM_VERSION_REQUEST        ,
@@ -146,9 +135,6 @@ void wifi_init_sta(void)
         .sta = {
             .ssid = EXAMPLE_ESP_WIFI_SSID,
             .password = EXAMPLE_ESP_WIFI_PASS,
-            /* Setting a password implies station will connect to all security modes including WEP/WPA.
-             * However these modes are deprecated and not advisable to be used. Incase your Access point
-             * doesn't support WPA2, these mode can be enabled by commenting below line */
 	        .threshold.authmode = WIFI_AUTH_WPA2_PSK,
             .pmf_cfg = 
             {
@@ -333,7 +319,7 @@ void http_get_firmware_file(void)
     CurrentRequest = FIRM_FILE_REQUEST;
     esp_http_client_config_t client_config = 
     {
-        .url = NGROK_URL_FILE,
+        .url = URL_FILE,
         .event_handler = client_event_handler
     };
     esp_http_client_handle_t client = esp_http_client_init(&client_config);
@@ -346,7 +332,7 @@ void http_get_firmware_version(void)
     CurrentRequest = FIRM_VERSION_REQUEST;
     esp_http_client_config_t client_config = 
     {
-        .url = NGROK_URL_VERSION,
+        .url = URL_VERSION,
         .event_handler = client_event_handler
     };
     esp_http_client_handle_t client = esp_http_client_init(&client_config);
