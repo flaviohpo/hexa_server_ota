@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HEXA SERVER</title>
+    <link rel="stylesheet" href="../static/bootstrap.css">
+  </head>
+  <body>
+    <h1>Firmware database: </h1>
+    <table class="table">
+      <thead>
+        <tr><th>Version</th><th>Name</th><th>Upload Date</th><th>Target</th></tr>
+      </thead>
+      <tbody>
+        {% for fw in firmwares %}
+        <tr><td>{{fw.version}}</td><td>{{fw.file_name}}</td><td>{{fw.upload_date}}</td><td>{{fw.target}}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    
+  </body>
+</html>
