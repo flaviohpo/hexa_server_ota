@@ -10,14 +10,19 @@
     <h1>Firmware database: </h1>
     <table class="table">
       <thead>
-        <tr><th>Version</th><th>Name</th><th>Upload Date</th><th>Target</th></tr>
+        <tr><th>Version</th><th>Name</th><th>Upload Date</th><th>Target</th><th> </th></tr>
       </thead>
       <tbody>
         {% for fw in firmwares %}
-        <tr><td>{{fw.version}}</td><td>{{fw.file_name}}</td><td>{{fw.upload_date}}</td><td>{{fw.target}}</td></tr>
+        <tr>
+          <td>{{fw.version}}</td>
+          <td>{{fw.file_name}}</td>
+          <td>{{fw.upload_date}}</td>
+          <td>{{fw.target}}</td>
+          <td><input type="submit" class="button" value="Remove" onclick="" /></td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
-    
   </body>
 </html>

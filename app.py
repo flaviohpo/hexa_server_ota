@@ -8,13 +8,13 @@
 # fazer uma funcao que busca a versao dentro do arquivo pois
 # este metodo é chamado em varios lugares 
 
-from flask import Flask
-from flask import send_file
-from flask import render_template
+import urllib.request as req
 import os.path
 import re
 import logging
+import psycopg2
 from datetime import datetime
+from flask import Flask, send_file, render_template, redirect
 
 logging.basicConfig(level = logging.INFO, 
                     filename = 'hexa_server.log', 
@@ -49,11 +49,21 @@ def read_file_version():
                 return(match.group(0))
             b = firm_version.readline()
 
+def get_db_connection():
+    conn = psycopg2.connect(host='localhost',
+                            database='hexa_server',
+                            #user=os.environ['DB_USERNAME'],
+                            #password=os.environ['DB_PASSWORD'])
+                            user=os.environ['DB_USERNAME'],
+                            password=os.environ['DB_PASSWORD'])
+    return conn
+
 ###################################
 ### OBJECTS
 version = read_file_version()
 now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-firm = [Firmware(version, 'espcode.bin', now, 'ESP32'),]
+firm =  [   Firmware(version, 'espcode.bin', now, 'ESP32'),
+            Firmware('1.1.0', 'BLCD.bin', now, 'ESP32S3'),   ]
 app = Flask(__name__)
 
 #################################
@@ -62,6 +72,29 @@ app = Flask(__name__)
 def home():
     logging.info('GET /')
     return render_template('home.html', firmwares=firm)
+
+@app.route('/login')
+def login():
+    logging.info('GET /login')
+    return render_template('login.html');
+
+@app.route('/autenticar', methods=['POST',])
+def autenticar():
+    logging.info('GET /autenticar')
+    if req.form['user'] == 'admin' and req.form['pass'] == 'admin':
+        return redirect('/')
+    else:
+        return redirect('/login')
+
+@app.route('/users')
+def get_users():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM users;')
+    result = cur.fetchall()
+    cur.close()
+    conn.close()
+    return result.__str__()
 
 @app.route('/firmware')
 def get_firmware():
