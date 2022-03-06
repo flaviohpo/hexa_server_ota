@@ -129,7 +129,7 @@ def get_firmware_file():
 @app.route('/firmware_version')
 def get_firmware_version():
     logging.info('GET /firmware_version')
-    return(firm.version)
+    return(firm[0].version)
 
 #################################################
 ### start the server with the 'run()' method

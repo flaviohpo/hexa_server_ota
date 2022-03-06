@@ -51,10 +51,10 @@ dando um problema de acesso em memoria não permitido
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
-#define EXAMPLE_ESP_WIFI_SSID      "MaisUmaRede"
-#define EXAMPLE_ESP_WIFI_PASS      "m1m1uK1___"
-#define EXAMPLE_ESP_MAXIMUM_RETRY  3
-#define BLINK_GPIO      2
+#define EXAMPLE_ESP_WIFI_SSID       "MaisUmaRede"
+#define EXAMPLE_ESP_WIFI_PASS       "m1m1uK1___"
+#define EXAMPLE_ESP_MAXIMUM_RETRY   3
+#define BLINK_GPIO                  2
 
 esp_err_t ota_update_start(uint32_t last_data_length, esp_partition_t** update_partition, esp_ota_handle_t* ota_handle);
 esp_err_t ota_update_chunk(uint8_t* data, uint32_t size, esp_ota_handle_t* ota_handle);
@@ -63,14 +63,15 @@ esp_err_t ota_update_finish(esp_partition_t** update_partition, esp_ota_handle_t
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT      BIT1
+#define WIFI_CONNECTED_BIT  BIT0
+#define WIFI_FAIL_BIT       BIT1
 #define LOG_OTA             "OTA"
 #define LOG_WIFI            "WIFI"
 #define URL_VERSION         "http://127.0.0.1:5000/firmware_version"
 #define URL_FILE            "http://127.0.0.1:5000/firmware_file"
 
 typedef enum{
+    GET_WORLD_CLOCK_API         ,
     FIRM_VERSION_REQUEST        ,
     FIRM_FILE_REQUEST           ,
 }CURRENT_HTTP_REQUEST_tn;
@@ -342,6 +343,7 @@ void http_get_firmware_version(void)
 
 void get_worldclock_api(void)
 {
+    CurrentRequest = GET_WORLD_CLOCK_API;
     esp_http_client_config_t client_config = 
     {
         .url = "http://worldclockapi.com/api/json/utc/now",
@@ -371,7 +373,7 @@ void app_main(void)
     ESP_LOGI(LOG_WIFI, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
-    //get_worldclock_api();
+    get_worldclock_api();
 
     gpio_pad_select_gpio(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
