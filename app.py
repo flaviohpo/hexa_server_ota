@@ -1,12 +1,6 @@
-# usar logging para:
-# - quem atualizou o firm
-# RESPONDER COM O HEADER DE ERRO! STATUS???
-# PRA ELE NAO QUERER DAR UPDATE COM A STRING DE EXCEPTION
 # https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 # principais 200 400 500
-# - responder e logar tbm o status
-# fazer uma funcao que busca a versao dentro do arquivo pois
-# este metodo é chamado em varios lugares 
+# fazer a autenticação com oAuth
 
 import urllib.request as req
 import os.path

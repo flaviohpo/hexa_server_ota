@@ -33,6 +33,16 @@
     "esp_log.h": "c",
     "esp_idf_version.h": "c",
     "sdkconfig.h": "c",
-    "my_wifi.h": "c"
+    "my_wifi.h": "c",
+    "ctype.h": "c",
+    "cctype": "c",
+    "*.tcc": "cpp",
+    "optional": "cpp",
+    "istream": "cpp",
+    "ostream": "cpp",
+    "ratio": "cpp",
+    "system_error": "cpp",
+    "tuple": "cpp",
+    "type_traits": "cpp"
   }
 }
