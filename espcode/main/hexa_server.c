@@ -5,6 +5,27 @@ static esp_ota_handle_t ota_handle;
 static const esp_partition_t *update_partition;
 static FIRMWARE_ts firmware;
 
+/**
+ * @brief set major, minor and patch from version_ptr based on the version_str string received.
+ */
+esp_err_t hexa_srv_set_version(VERSION_ts* version_ptr, char* version_str)
+{
+    char version_aux[32] = {0};
+    char* token;
+    if (version_str == NULL)
+    {
+        return ESP_FAIL;
+    }
+    strncpy(version_aux, version_str, strlen(version_str));
+    token = strtok(version_aux, ".");
+    version_ptr->major = atoi(token);
+    token = strtok(NULL, ".");
+    version_ptr->minor = atoi(token);
+    token = strtok(NULL, ".");
+    version_ptr->patch = atoi(token);
+    return ESP_OK;
+}
+
 esp_err_t hexa_srv_on_header_callback(char* key, char* value)
 {
     if((key == NULL) || (value == NULL))
@@ -20,21 +41,12 @@ esp_err_t hexa_srv_on_header_callback(char* key, char* value)
     return ESP_OK;
 }
 
-esp_err_t hexa_srv_on_data_version(char* data, uint32_t data_size, uint32_t pkt_counter)
+esp_err_t hexa_srv_on_data_version_callback(char* data, uint32_t data_size, uint32_t pkt_counter)
 {
-    char version_aux[32] = {0};
-    char* token;
-    strncpy(version_aux, data, data_size);
-    token = strtok(version_aux, ".");
-    firmware.version.major = atoi(token);
-    token = strtok(NULL, ".");
-    firmware.version.minor = atoi(token);
-    token = strtok(NULL, ".");
-    firmware.version.patch = atoi(token);
-    return ESP_OK;
+    return hexa_srv_set_version( &(firmware.version), data);
 }
 
-esp_err_t hexa_srv_on_data_firm(char* data, uint32_t data_size, uint32_t pkt_counter)
+esp_err_t hexa_srv_on_data_firm_callback(char* data, uint32_t data_size, uint32_t pkt_counter)
 {
     if(pkt_counter == 0)
     {
@@ -69,7 +81,7 @@ esp_err_t hexa_srv_on_data_firm(char* data, uint32_t data_size, uint32_t pkt_cou
     return ESP_OK;
 }
 
-esp_err_t hexa_srv_on_finish_firm(void)
+esp_err_t hexa_srv_on_finish_firm_callback(void)
 {
     esp_err_t err = esp_ota_end(ota_handle);
     if (err == ESP_OK)

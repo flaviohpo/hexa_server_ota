@@ -82,11 +82,11 @@ esp_err_t general_HTTP_EVENT_ON_DATA_callback(void* data, uint32_t data_size, ui
     break;
 
     case WIFI_REQUEST_HEXA_SERVER_GET_FIRM_VERSION:
-      hexa_srv_on_data_version(data, data_size, pkt_counter);
+      hexa_srv_on_data_version_callback(data, data_size, pkt_counter);
     break;
 
     case WIFI_REQUEST_HEXA_SERVER_GET_FIRM:
-      hexa_srv_on_data_firm(data, data_size, pkt_counter);
+      hexa_srv_on_data_firm_callback(data, data_size, pkt_counter);
     break;
 
     default:
@@ -99,7 +99,7 @@ esp_err_t general_HTTP_EVENT_ON_DATA_callback(void* data, uint32_t data_size, ui
 
 esp_err_t general_HTTP_EVENT_ON_FINISH_callback(void)
 {
-  hexa_srv_on_finish_firm();
+  hexa_srv_on_finish_firm_callback();
   return ESP_OK;
 }
 
@@ -161,6 +161,11 @@ void app_main(void)
     gpio_pad_select_gpio(BLINK_GPIO);
     gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
     
+    if(hexa_server_check_version())
+    {
+      
+    }
+
     while(1)
     {
 
